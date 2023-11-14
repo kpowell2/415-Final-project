@@ -1,65 +1,143 @@
-#Team Name: Incomplete
-#Members: Ashley Ching, Parampal Singh, Pankuri Khare, Kendall Powell
+# CSC415 Group Term Assignment - File System
 
-##Steps for milestone 1:
-Remember – in order to manipulate anything on disk, you must first bring it into memory
-1) Determine if you need to format the volume or not.
- a. In fsInit is the initFileSystem function where you want to start this code
- b. Malloc a Block of memory as your VCB pointer and LBAread block 0
- c. You now have a pointer to a structure, so look at the signature (magic number)
-in your structure and see if it matches.
- d. If it matches you have initialized your volume already – If not you need to
-initialize it
-2) If you need to initialize it
- a. Initialize the values in your volume control block
- b. Initialize free space (see that below)
- c. Initialize the root directory (see that below)
- d. Set the values returned from above in the VCB
- e. LBAwrite the VCB to block 0
-3) Initialize the Free Space
- a. Let’s assume you are using a bitmap for your free space management. Given the
-default size, you will have 19,531 blocks – so you need 19,531 bits or 2,442 bytes
-or 5 blocks (so from this alone you can see that the free space map is NOT part of
-the VCB, but rather the VCB would have the block number where your free space
-starts).
- b. Before you can initialize the bits, you must have the memory to do so. So malloc
-the space needed. In this example 5 * blockSize
- c. Now you have a pointer to at least 2442 bytes (actually 2560 bytes). Now you
-can first decide where you want to store this free space map (like from block 1 –
-5 inclusive), and you know block 0 is the VCB so the first 6 bits should be marked
-used and the rest marked free.
- d. Now write that to disk with LBAwrite(theFreeSpaceMap, 5, 1) – that is write 5
-blocks starting from block 1
- e. Return the starting block number of the free space to the VCB init that called you
-so it knows how to set the VCB structure variable that indicates where free space
-starts. Or mark it yourself if the VCB is a global structure.
-4) Initialize the Root Directory
- a. First again, you need memory – how much?
- b. Decide how many Directory Entries (DE) you want for a directory (at least an
-initial amount). I will use 50 for this example.
- c. Now multiply the size of your directory entry by the number of entries. For
-example, if my directory entry is 60 bytes, I would multiply 60 * 50 = 3000 bytes
-needed.
- d. Now you need to determine how many blocks you need. In the example that
-would be 6 blocks. But wait.... 6 blocks is 3072 bytes and I am only using 3000
-bytes, and my directory entry is only 60 bytes, so I can actually fit 51 directory
-entries in the space of 3072 bytes (now only wasting 12 bytes instead of 72).
- e. Now you have a pointer to an array of directory entries. Loop through them (in
-our case for (i = 0; i < 51; i++) and initialize each directory entry structure to be in
-a known free state.
- f. Now ask the free space system for 6 blocks. It should return to you the starting
-block number for those 6 blocks.
- g. Now set the first directory entry to the “.” Directory. So, the name is “.”, the size
-is 3060 bytes, it starts at block number (whatever the free space system
-returned above), the time stamps are the current time, it is a directory, etc.
- h. Now set the second directory entry to “..”, but since this is the root, it is the
-same as the “.” except the name is “..” rather than “.”
- i. Now write the root directory – 6 blocks starting from block (what was returned
-from the free space allocation).
- j. Return the starting block number of the root directory (or set it in the VCB
-yourself)
-Note – while your system is running you only ever init or read the freespace map once. Keep it
-in memory so you can manipulate it as needed and when you change it just write it out to disk
-again so that the disk reflects the current state
+This is a GROUP assignment written in C.  Only one person on the team needs to submit the project.
 
+Your team have been designing components of a file system.  You have defined the goals and designed the directory entry structure, the volume structure and the free space.  Now it is time to implement your file system.
+
+While each of you can have your own github, only one is what you use for the project to be turned in.  Make sure to list that one on the writeups.
+
+The project is in three phases.  The first phase is the "formatting" the volume.  This is further described in the steps for phase one and the phase one assignment.
+
+The second phase is the implementation of the directory based functions.  See Phase two assignment.
+
+The final phase is the implementation of the file operations.
+
+To help I have written the low level LBA based read and write.  The routines are in fsLow.o, the necessary header for you to include file is fsLow.h.  You do NOT need to understand the code in fsLow, but you do need to understand the header file and the functions.  There are 2 key functions:
+
+
+
+`uint64_t LBAwrite (void * buffer, uint64_t lbaCount, uint64_t lbaPosition);`
+
+`uint64_t LBAread (void * buffer, uint64_t lbaCount, uint64_t lbaPosition);`
+
+LBAread and LBAwrite take a buffer, a count of LBA blocks and the starting LBA block number (0 based).  The buffer must be large enough for the number of blocks * the block size.
+
+On return, these function returns the number of **blocks** read or written.
+
+
+
+In addition, I have written a hexdump utility that will allow you to analyze your volume file in the Hexdump subdirectory.
+
+**Your assignment is to write a file system!** 
+
+You will need to format your volume, create and maintain a free space management system, initialize a root directory and maintain directory information, create, read, write, and delete files, and display info.  See below for specifics.
+
+I have provided an initial “main” (fsShell.c) that will be the driver to test you file system.  Your group can modifiy this driver as needed.   The driver will be interactive (with all built in commands) to list directories, create directories, add and remove files, copy files, move files, and two “special commands” one to copy from the normal filesystem to your filesystem and the other from your filesystem to the normal filesystem.
+
+You should modify this driver as needed for your filesystem, adding the display/setting of any additional meta data, and other functions you want to add.
+
+The shell also calls two function in the file fsInit.c `initFileSystem` and `exitFileSystem` which are routines for you to fill in with whatever initialization and exit code you need for your file system.  
+
+Some specifics - you need to provide the following interfaces:
+
+```
+b_io_fd b_open (char * filename, int flags);
+int b_read (b_io_fd fd, char * buffer, int count);
+int b_write (b_io_fd fd, char * buffer, int count);
+int b_seek (b_io_fd fd, off_t offset, int whence);
+int b_close (b_io_fd fd);
+
+```
+
+Note that the function are similar to the b_read you have done, there is a signifigant difference since you now write the function to find the file information.  
+You have to have methods of locating files, and knowing which logical block addresses are associated with the file.
+
+Directory Functions - see [https://www.thegeekstuff.com/2012/06/c-directory/](https://www.thegeekstuff.com/2012/06/c-directory/) for reference.
+
+```
+int fs_mkdir(const char *pathname, mode_t mode);
+int fs_rmdir(const char *pathname);
+fdDir * fs_opendir(const char *name);
+struct fs_diriteminfo *fs_readdir(fdDir *dirp);
+int fs_closedir(fdDir *dirp);
+
+char * fs_getcwd(char *buf, size_t size);
+int fs_setcwd(char *buf);   //linux chdir
+int fs_isFile(char * path);	//return 1 if file, 0 otherwise
+int fs_isDir(char * path);		//return 1 if directory, 0 otherwise
+int fs_delete(char* filename);	//removes a file
+
+// This is NOT the directory entry, it is JUST for readdir.
+struct fs_diriteminfo
+    {
+    unsigned short d_reclen;    /* length of this record */
+    unsigned char fileType;    
+    char d_name[256]; 			/* filename max filename is 255 characters */
+    };
+```
+Finally file stats - not all the fields in the structure are needed for this assingment
+
+```
+int fs_stat(const char *path, struct fs_stat *buf);
+
+struct fs_stat
+    {
+    off_t     st_size;    		/* total size, in bytes */
+    blksize_t st_blksize; 		/* blocksize for file system I/O */
+    blkcnt_t  st_blocks;  		/* number of 512B blocks allocated */
+    time_t    st_accesstime;   	/* time of last access */
+    time_t    st_modtime;   	/* time of last modification */
+    time_t    st_createtime;   	/* time of last status change */
+	
+    * add additional attributes here for your file system */
+    };
+
+```
+
+These interfaces will also be provided to you in mfs.h.
+
+**Note:** You will need to modify mfs.h for the fdDIR strucutre to be what your file system need to maintain and track interation through the directory structure.
+
+A shell program designed to demonstrate your file system called fsshell.c is proviced.  It has a number of built in functions that will work if you implement the above interfaces, these are:
+```
+ls - Lists the file in a directory
+cp - Copies a file - source [dest]
+mv - Moves a file - source dest
+md - Make a new directory
+rm - Removes a file or directory
+touch - creates a file
+cat - (limited functionality) displays the contents of a file
+cp2l - Copies a file from the test file system to the linux file system
+cp2fs - Copies a file from the Linux file system to the test file system
+cd - Changes directory
+pwd - Prints the working directory
+history - Prints out the history
+help - Prints out help
+```
+
+
+This is deliberately vague, as it is dependent on your filesystem design.  And this all you may get initially for a real-world assignment, so if you have questions, please ask.
+
+We will discuss some of this in class.
+
+For our purposes use 10,000,000 or less (minimum 500,000) bytes for the volume size and 512 bytes per sector.  These are the values to pass into startPartitionSystem.
+
+What needs to be submitted (via GitHub and iLearn):
+
+* 	All source files (.c and .h)
+* 	Modified Driver program (must be a program that just utilizes the header file for your file system).
+* 	The Driver program must be named:  `fsshell.c`
+* 	A make file (named “Makefile”) to build your entire program
  
+* A PDF writeup on project that should include (this is also submitted in iLearn):
+	* The github link for your group submission.
+	* A description of your file system
+	* Issues you had
+	* Detail of how your driver program works
+	* Screen shots showing each of the commands listed above
+* 	Your volume file (limit 10MB)
+*  There will also be an INDIVIDUAL report (form) to complete.
+
+
+
+
