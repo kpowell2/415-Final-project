@@ -150,10 +150,9 @@ int b_write (b_io_fd fd, char * buffer, int count)
 	int bytesleft = count;
 
 	while (bytesleft >= B_CHUNK_SIZE) {
-		memcpy(fcbArray[fd].buf + fcbArray[fd].index, buffer + (count - bytesleft), freespace);
-		bytesleft -= freespace;
+		memcpy(fcbArray[fd].buf + fcbArray[fd].index, buffer + (count - bytesleft), B_CHUNK_SIZE);
+		bytesleft -= B_CHUNK_SIZE;
 		fcbArray[fd].index = 0;
-		freespace = B_CHUNK_SIZE;
 		fcbArray[fd].block++;
 		writeBuffer(fcbArray[fd].file, fcbArray[fd].buf); // FIXME: implement method
 	}
