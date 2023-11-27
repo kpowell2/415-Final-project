@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include "b_io.h"
+#include "mfs.h"
 
 #define MAXFCBS 20
 #define B_CHUNK_SIZE 512
@@ -27,9 +28,12 @@
 typedef struct b_fcb
 	{
 	/** TODO add al the information you need in the file control block **/
+	fdDir* file;
 	char * buf;		//holds the open file buffer
 	int index;		//holds the current position in the buffer
 	int buflen;		//holds how many valid bytes are in the buffer
+	int eof;		//reach end of file
+	int block;		//blocks used
 	} b_fcb;
 	
 b_fcb fcbArray[MAXFCBS];
@@ -53,7 +57,7 @@ b_io_fd b_getFCB ()
 	{
 	for (int i = 0; i < MAXFCBS; i++)
 		{
-		if (fcbArray[i].buff == NULL)
+		if (fcbArray[i].buf == NULL)
 			{
 			return i;		//Not thread safe (But do not worry about it for this assignment)
 			}
@@ -75,7 +79,37 @@ b_io_fd b_open (char * filename, int flags)
 	if (startup == 0) b_init();  //Initialize our system
 	
 	returnFd = b_getFCB();				// get our own file descriptor
-										// check for error - all used FCB's
+	if (returnFd == -1) {				// check for error - all used FCB's
+		printf("b_open Error: All FCB in use\n");
+		return -1;
+	}
+
+	fdDir* file = getDir(filename); // FIXME: create method
+	if (file == NULL) {
+		printf("b_open: file not found, attempting to create %s.", filename);
+
+		if (flags & O_CREAT) {
+			file = createDir(filename, 0777); // FIXME: create method
+			char* parentPath = getParentPath(filename); // FIXME: create method
+			fdDir* parent = getDir(parentPath);
+			setParent(file, parent); // FIXME: create method
+			writeDir(file); // FIXME: create method
+		} else {
+			printf("b_open Error: failed creating %s.", filename);
+			return -1;
+		}
+	}
+
+	fcbArray[returnFd].file = file;
+
+	fcbArray[returnFd].buf = (char*) malloc(sizeof(char) * B_CHUNK_SIZE);
+	if (fcbArray[returnFd].buf == NULL) {
+		printf("b_open Error: buffer initialization failed.\n");
+		return -1;
+	}
+
+	fcbArray[returnFd].buflen = 0;
+	fcbArray[returnFd].index = 0;
 	
 	return (returnFd);						// all set
 	}
@@ -108,9 +142,28 @@ int b_write (b_io_fd fd, char * buffer, int count)
 		{
 		return (-1); 					//invalid file descriptor
 		}
+	
+	if (fcbArray[fd].buf == NULL) {
+		return -1;
+	}
+
+	int bytesleft = count;
+
+	while (bytesleft >= B_CHUNK_SIZE) {
+		memcpy(fcbArray[fd].buf + fcbArray[fd].index, buffer + (count - bytesleft), freespace);
+		bytesleft -= freespace;
+		fcbArray[fd].index = 0;
+		freespace = B_CHUNK_SIZE;
+		fcbArray[fd].block++;
+		writeBuffer(fcbArray[fd].file, fcbArray[fd].buf); // FIXME: implement method
+	}
+
+	if (bytesleft > 0) {
+		memcpy(fcbArray[fd].buf + fcbArray[fd].index, buffer + (count - bytesleft), bytesleft);
+		writeBuffer(fcbArray[fd].file, fcbArray[fd].buf); // FIXME: implement method
+	}
 		
-		
-	return (0); //Change this
+	return count;
 	}
 
 
@@ -145,8 +198,58 @@ int b_read (b_io_fd fd, char * buffer, int count)
 		return (-1); 					//invalid file descriptor
 		}
 		
-	return (0);	//Change this
+	//---------------------------------------------------------------
+	if (fcbArray[fd].file == NULL)		//File not open for this descriptor
+		{
+		return -1;
+		}	
+
+	// Your Read code here - the only function you call to get data is LBAread.
+	// Track which byte in the buffer you are at, and which block in the file	
+	if (fcbArray[fd].eof == 1) {
+		return 0;
 	}
+
+	int totalBytesRead = (fcbArray[fd].block - 1) * B_CHUNK_SIZE + fcbArray[fd].index;
+
+	// if reaching end of file, set count to remaining bytes
+	if (totalBytesRead + count > fcbArray[fd].file->di->d_reclen) {
+		count = fcbArray[fd].file->di->d_reclen - totalBytesRead;
+		fcbArray[fd].eof = 1;
+	}
+
+	// if the buffer can provide the bytes needed
+	if (fcbArray[fd].index + count < B_CHUNK_SIZE) {
+		memcpy(buffer, fcbArray[fd].buf + fcbArray[fd].index, count);
+		fcbArray[fd].index += count;
+	// else we need to get more blocks of data
+	} else {
+		// get remaining data from current buffer
+		int bytesRead = B_CHUNK_SIZE - fcbArray[fd].index;
+		memcpy(buffer, fcbArray[fd].buf + fcbArray[fd].index, bytesRead);
+		LBAread(fcbArray[fd].buf, 1, fcbArray[fd].file->dirEntryPosition + fcbArray[fd].block);
+		fcbArray[fd].block++;
+
+		// get blocks of data at a time
+		while (bytesRead + B_CHUNK_SIZE <= count) {
+			memcpy(buffer + bytesRead, fcbArray[fd].index, B_CHUNK_SIZE);
+			LBAread(fcbArray[fd].buf, 1, fcbArray[fd].file->dirEntryPosition + fcbArray[fd].block);
+			fcbArray[fd].block++;
+			bytesRead += B_CHUNK_SIZE;
+		}
+
+		// get remaining bytes from new buffer
+		if (count == 0) {
+			fcbArray[fd].index = 0;
+		} else {
+			memcpy(buffer + bytesRead, fcbArray[fd].buf, count - bytesRead);
+			fcbArray[fd].index = count - bytesRead;
+		}
+	}
+	buffer[count] = '\0'; // null terminate the string at the requested byte marker
+	return count;
+	}
+	//----------------------------------------------------------------
 	
 // Interface to Close the file	
 int b_close (b_io_fd fd)
